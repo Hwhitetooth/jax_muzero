@@ -68,7 +68,7 @@ class EvaluateActor(object):
         epinfos = [None] * num_envs
         count = 0
         while count < num_envs:
-            rng_key, action, agent_out, max_search_depth, avg_search_depth = self._agent.step(
+            rng_key, action, agent_out = self._agent.step(
                 rng_key, params, jax.device_put(timestep), 1., True)
             action = jax.device_get(action)
             observation, reward, done, info = self._envs.step(action)
