@@ -1,0 +1,11 @@
+name: muzero
+channels:
+  - defaults
+dependencies:
+  - pip==20.0.2
+  - python==3.8
+  - cudatoolkit
+  - cudnn
+  - cloudpickle
+  - pip:
+      - -r requirements.txt

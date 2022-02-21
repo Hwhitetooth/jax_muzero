@@ -1,2 +1,52 @@
-# jax_muzero
-An implementation of MuZero in JAX.
+# JAX MuZero
+A JAX implementation of the [MuZero agent](https://www.nature.com/articles/s41586-020-03051-4.pdf).
+
+Everything is implemented in [JAX](https://github.com/google/jax), including the MCTS. The entire search process can be jitted and can run on accelerators such as GPUs.
+
+## Requirements
+Run the following command to create a new conda environment with all dependencies:
+```bash
+conda env create -f conda_env.yml
+```
+Then activate the conda environment by
+```bash
+conda activate muzero
+```
+Or if you prefer using your own Python environment, run the following command to install the dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+
+## Training
+Run the following command for learning to play the Atari game Breakout:
+```bash
+python -m experiments.breakout
+```
+
+
+## Repository Structure
+```
+.
+├── algorithms              # Files for the MuZero algorithm.
+│   ├── actors.py           # Agent-environment interaction.
+│   ├── agents.py           # An RL agent that plans with a learned model by MCTS.
+│   ├── haiku_nets.py       # Neural networks.
+│   ├── muzero.py           # The training pipeline.
+│   ├── replay_buffers.py   # Experience replay.
+│   ├── types.py            # Customized data structures.
+│   └── utils.py            # Helper functions.
+├── environments            # The Atari environment interface and wrappers.
+├── experiments             # Experiment configuration files.
+├── vec_env                 # Vectorized environment interfaces.
+├── conda_env.yml           # Conda environment specification.
+├── requirements.txt        # Python dependencies.
+├── LICENSE
+└── README.md
+```
+
+
+## Resources
+* NeurIPS 2020: JAX Ecosystem Meetup, [video](https://www.youtube.com/watch?v=iDxJxIyzSiM) and [slides](https://storage.googleapis.com/deepmind-media/Jax/NeurIPS%20outreach%20session.pdf)
+* https://arxiv.org/src/1911.08265v2/anc/pseudocode.py
+* https://github.com/YeWR/EfficientZero
