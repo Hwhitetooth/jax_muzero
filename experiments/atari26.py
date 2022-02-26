@@ -39,10 +39,7 @@ ENV_NAMES = [
 
 if __name__ == '__main__':
     config = {
-        'env_id': tune.grid_search([
-            'atari/' + env_id
-            for env_id in ENV_NAMES
-        ]),
+        'env_id': tune.grid_search([env_id for env_id in ENV_NAMES]),
         'env_kwargs': {},
         'seed': 42,
         'num_envs': 1,
@@ -66,7 +63,6 @@ if __name__ == '__main__':
 
         'replay_min_size': 2_000,
         'replay_max_size': 100_000,
-        'replay_compress': True,
         'batch_size': 256,
 
         'value_coef': 0.25,

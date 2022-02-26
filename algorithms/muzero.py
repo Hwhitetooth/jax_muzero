@@ -380,7 +380,7 @@ if __name__ == '__main__':
         'target_update_interval': 200,
 
         'evaluate_episodes': 32,
-        'log_interval': 200,
+        'log_interval': 4_000,
         'total_frames': 100_000,
     }
     analysis = tune.run(
@@ -390,6 +390,6 @@ if __name__ == '__main__':
             'num_updates': 120_000,
         },
         resources_per_trial={
-            'gpu': 2,
+            'gpu': 4,
         },
     )

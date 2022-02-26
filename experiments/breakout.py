@@ -9,7 +9,7 @@ from algorithms.muzero import Experiment
 
 if __name__ == '__main__':
     config = {
-        'env_id': 'atari/breakout',
+        'env_id': 'breakout',
         'env_kwargs': {},
         'seed': 42,
         'num_envs': 1,
@@ -33,7 +33,6 @@ if __name__ == '__main__':
 
         'replay_min_size': 2_000,
         'replay_max_size': 100_000,
-        'replay_compress': True,
         'batch_size': 256,
 
         'value_coef': 0.25,
