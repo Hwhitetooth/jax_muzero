@@ -137,8 +137,8 @@ def generate_update_fn(agent: agents.Agent, opt_update, unroll_steps: int, td_st
         return jnp.mean(losses), log
 
     def update(rng_key: chex.PRNGKey, params: Params, target_params: Params, opt_state, trajectories: ActorOutput):
-        rng_key, sub_key = jax.random.split(rng_key)
-        grads, log = jax.grad(batch_loss, has_aux=True)(params, target_params, trajectories, sub_key)
+        grads, log = jax.grad(batch_loss, has_aux=True)(params, target_params, trajectories, rng_key)
+        grads = jax.lax.pmean(grads, axis_name='i')
         updates, opt_state = opt_update(grads, opt_state, params)
         params = optax.apply_updates(params, updates)
         log.update({
@@ -146,7 +146,7 @@ def generate_update_fn(agent: agents.Agent, opt_update, unroll_steps: int, td_st
             'update_norm': optax.global_norm(updates),
             'param_norm': optax.global_norm(params),
         })
-        return rng_key, params, opt_state, log
+        return params, opt_state, log
 
     return update
 
@@ -155,11 +155,11 @@ class Experiment(tune.Trainable):
     def setup(self, config):
         self._config = config
         platform = jax.lib.xla_bridge.get_backend().platform
-        logging.warning('Running on %s', platform)
+        self._num_devices = jax.lib.xla_bridge.device_count()
+        logging.warning("Running on %s %s(s)", self._num_devices, platform)
 
         seed = config['seed']
-        env_id = config['env_id']
-        env_id = env_id[6:] + 'NoFrameskip-v4'
+        env_id = config['env_id'] + 'NoFrameskip-v4'
         self._envs = atari.make_vec_env(
             env_id,
             num_env=config['num_envs'],
@@ -249,6 +249,10 @@ class Experiment(tune.Trainable):
             )
         self._opt_state = self._opt.init(self._params)
 
+        self._params = jax.device_put_replicated(self._params, jax.local_devices())
+        self._target_params = self._params
+        self._opt_state = jax.device_put_replicated(self._opt_state, jax.local_devices())
+
         self._update_fn = generate_update_fn(
             self._agent,
             self._opt.update,
@@ -258,7 +262,7 @@ class Experiment(tune.Trainable):
             value_coef=config['value_coef'],
             policy_coef=config['policy_coef'],
         )
-        self._update_fn = jax.jit(self._update_fn)
+        self._update_fn = jax.pmap(self._update_fn, axis_name='i')
 
         self._replay_buffer = replay.UniformBuffer(
             min_size=config['replay_min_size'],
@@ -266,6 +270,7 @@ class Experiment(tune.Trainable):
             traj_len=config['unroll_steps'] + config['td_steps'],
         )
         self._batch_size = config['batch_size']
+        assert self._batch_size % self._num_devices == 0
 
         self._log_interval = config['log_interval']
         self._num_frames = 0
@@ -275,12 +280,16 @@ class Experiment(tune.Trainable):
         init_timestep = self._actor.initial_timestep()
         self._replay_buffer.extend(init_timestep)
         self._num_frames += init_timestep.observation.shape[0]
+        act_params = jax.tree_map(lambda t: t[0], self._params)
         while not self._replay_buffer.ready():
-            self._rng_key, timesteps, epinfos = self._actor.step(self._rng_key, self._params, random=True)
+            self._rng_key, timesteps, epinfos = self._actor.step(self._rng_key, act_params, random=True)
             self._replay_buffer.extend(timesteps)
             self._num_frames += timesteps.observation.shape[0]
-        self._trajectories = self._replay_buffer.sample(self._batch_size)
-        self._trajectories = jax.device_put(self._trajectories)
+        self._trajectories = [
+            self._replay_buffer.sample(self._batch_size // self._num_devices)
+            for _ in range(self._num_devices)
+        ]
+        self._trajectories = jax.device_put_sharded(self._trajectories, jax.local_devices())
 
     def step(self):
         t0 = time.time()
@@ -292,24 +301,32 @@ class Experiment(tune.Trainable):
             # This enables overlap between training, which only needs the GPU, and sampling, which only needs the CPU.
             # Acting needs both the CPU, the GPU, and synchronization between these two, so it is like a barrier and
             # cannot overlap with either of the other two operations.
-            self._rng_key, self._params, self._opt_state, log = self._update_fn(
-                self._rng_key, self._params, self._target_params, self._opt_state, self._trajectories)
+            self._rng_key, update_key = jax.random.split(self._rng_key)
+            update_keys = jax.random.split(update_key, self._num_devices)
+            self._params, self._opt_state, log = self._update_fn(
+                update_keys, self._params, self._target_params, self._opt_state, self._trajectories)
             self._num_updates += 1
             if self._num_updates % self._target_update_interval == 0:
                 self._target_params = self._params
 
-            self._trajectories = self._replay_buffer.sample(self._batch_size)
-            self._trajectories = jax.device_put(self._trajectories)
+            self._trajectories = [
+                self._replay_buffer.sample(self._batch_size // self._num_devices)
+                for _ in range(self._num_devices)
+            ]
+            self._trajectories = jax.device_put_sharded(self._trajectories, jax.local_devices())
 
             if self._num_frames < self._total_frames:
+                act_params = jax.tree_map(lambda t: t[0], self._params)
                 temperature = self._temperature_fn(self._num_frames)
                 self._rng_key, timesteps, epinfos = self._actor.step(
-                    self._rng_key, self._params, random=False, temperature=temperature)
+                    self._rng_key, act_params, random=False, temperature=temperature)
                 self._replay_buffer.extend(timesteps)
                 self._num_frames += timesteps.observation.shape[0]
 
-        self._rng_key, epinfos = self._evaluate_actor.evaluate(self._rng_key, self._params)
+        act_params = jax.tree_map(lambda t: t[0], self._params)
+        self._rng_key, epinfos = self._evaluate_actor.evaluate(self._rng_key, act_params)
 
+        log = jax.tree_map(lambda t: t[0], log)
         log = jax.device_get(log)
         log.update({
             'ups': self._log_interval / (time.time() - t0),
@@ -327,7 +344,7 @@ class Experiment(tune.Trainable):
 
 if __name__ == '__main__':
     config = {
-        'env_id': 'atari/Qbert',
+        'env_id': 'Qbert',
         'env_kwargs': {},
         'seed': 42,
         'num_envs': 1,
@@ -373,6 +390,6 @@ if __name__ == '__main__':
             'num_updates': 120_000,
         },
         resources_per_trial={
-            'gpu': 1,
+            'gpu': 2,
         },
     )
