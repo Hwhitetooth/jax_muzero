@@ -50,7 +50,7 @@ def generate_update_fn(agent: agents.Agent, opt_update, unroll_steps: int, td_st
         reward_logits_target = utils.scalar_to_two_hot(reward_target, num_bins)
 
         ## 2.2 Policy
-        target_roots = agent.root_unroll(jax.lax.stop_gradient(target_params), trajectory)
+        target_roots = agent.root_unroll(target_params, trajectory)
         search_roots = jax.tree_map(lambda t: t[:unroll_steps + 1], target_roots)
         rng_key, search_key = jax.random.split(rng_key)
         search_keys = jax.random.split(search_key, search_roots.state.shape[0])
@@ -192,7 +192,7 @@ class Experiment(tune.Trainable):
             q_normalize_epsilon=config['q_normalize_epsilon'],
             child_select_epsilon=config['child_select_epsilon'],
         )
-        self._actor = actors.Actor(self._envs, self._agent, config['unroll_steps'] + config['td_steps'])
+        self._actor = actors.Actor(self._envs, self._agent)
         self._evaluate_actor = actors.EvaluateActor(self._evaluate_envs, self._agent)
 
         if config['temperature_scheduling'] == 'staircase':
@@ -263,7 +263,7 @@ class Experiment(tune.Trainable):
         self._replay_buffer = replay.UniformBuffer(
             min_size=config['replay_min_size'],
             max_size=config['replay_max_size'],
-            compress=config['replay_compress'],
+            traj_len=config['unroll_steps'] + config['td_steps'],
         )
         self._batch_size = config['batch_size']
 
@@ -272,30 +272,41 @@ class Experiment(tune.Trainable):
         self._total_frames = config['total_frames']
         self._num_updates = 0
 
+        init_timestep = self._actor.initial_timestep()
+        self._replay_buffer.extend(init_timestep)
+        self._num_frames += init_timestep.observation.shape[0]
         while not self._replay_buffer.ready():
-            self._rng_key, trajectories, epinfos = self._actor.rollout(
-                self._rng_key, self._params, random=True)
-            self._replay_buffer.extend(trajectories)
-            self._num_frames += trajectories.observation.shape[0]
+            self._rng_key, timesteps, epinfos = self._actor.step(self._rng_key, self._params, random=True)
+            self._replay_buffer.extend(timesteps)
+            self._num_frames += timesteps.observation.shape[0]
+        self._trajectories = self._replay_buffer.sample(self._batch_size)
+        self._trajectories = jax.device_put(self._trajectories)
 
     def step(self):
         t0 = time.time()
         for _ in range(self._log_interval):
-            trajectories = self._replay_buffer.sample(self._batch_size)
-            trajectories = jax.device_put(trajectories)
+            # There are essentially 3 operations in each iteration: sampling, training, and acting.
+            # The typical order of execution is: acting -> sampling -> training. But this order does not allow any
+            # parallelization. Here we use a different order: training -> sampling -> acting. Due to the asynchronous
+            # dispatching of JAX, the call to self._update_fn returns immediately before the computation completes.
+            # This enables overlap between training, which only needs the GPU, and sampling, which only needs the CPU.
+            # Acting needs both the CPU, the GPU, and synchronization between these two, so it is like a barrier and
+            # cannot overlap with either of the other two operations.
             self._rng_key, self._params, self._opt_state, log = self._update_fn(
-                self._rng_key, self._params, self._target_params, self._opt_state, trajectories)
+                self._rng_key, self._params, self._target_params, self._opt_state, self._trajectories)
             self._num_updates += 1
-
             if self._num_updates % self._target_update_interval == 0:
                 self._target_params = self._params
 
+            self._trajectories = self._replay_buffer.sample(self._batch_size)
+            self._trajectories = jax.device_put(self._trajectories)
+
             if self._num_frames < self._total_frames:
                 temperature = self._temperature_fn(self._num_frames)
-                self._rng_key, trajectories, epinfos = self._actor.rollout(
+                self._rng_key, timesteps, epinfos = self._actor.step(
                     self._rng_key, self._params, random=False, temperature=temperature)
-                self._replay_buffer.extend(trajectories)
-                self._num_frames += trajectories.observation.shape[0]
+                self._replay_buffer.extend(timesteps)
+                self._num_frames += timesteps.observation.shape[0]
 
         self._rng_key, epinfos = self._evaluate_actor.evaluate(self._rng_key, self._params)
 
@@ -324,7 +335,7 @@ if __name__ == '__main__':
         'td_steps': 5,
         'max_search_depth': None,
 
-        'channels': 32,
+        'channels': 64,
         'num_bins': 601,
         'use_resnet_v2': True,
         'output_init_scale': 0.,
@@ -340,8 +351,7 @@ if __name__ == '__main__':
 
         'replay_min_size': 2_000,
         'replay_max_size': 100_000,
-        'replay_compress': True,
-        'batch_size': 128,
+        'batch_size': 256,
 
         'value_coef': 0.25,
         'policy_coef': 1.,
@@ -353,7 +363,7 @@ if __name__ == '__main__':
         'target_update_interval': 200,
 
         'evaluate_episodes': 32,
-        'log_interval': 2_000,
+        'log_interval': 200,
         'total_frames': 100_000,
     }
     analysis = tune.run(

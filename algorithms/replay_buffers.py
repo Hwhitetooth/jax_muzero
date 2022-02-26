@@ -1,46 +1,37 @@
+from typing import Any
+
 import numpy as np
-import snappy
-
-
-from algorithms import utils
-from algorithms.types import ActorOutput
+import tree
 
 
 class UniformBuffer(object):
-    def __init__(self, min_size, max_size, compress=False):
+    def __init__(self, min_size: int, max_size: int, traj_len: int):
         self._min_size = min_size
         self._max_size = max_size
-        self._buf = [None for _ in range(max_size)]
+        self._traj_len = traj_len
+        self._timestep_storage = None
         self._n = 0
         self._idx = 0
-        if compress:
-            self._encode = lambda ts: ts._replace(observation=compress_array(ts.observation))
-            self._decode = lambda ts: ts._replace(observation=uncompress_array(ts.observation))
-        else:
-            self._encode = lambda ts: ts
-            self._decode = lambda ts: ts
 
-    def append(self, trajectory: ActorOutput):
-        if self._n < self._max_size:
-            self._n += 1
-        self._buf[self._idx] = self._encode(trajectory)
-        self._idx = (self._idx + 1) % self._max_size
+    def extend(self, timesteps: Any):
+        if self._timestep_storage is None:
+            sample_timestep = tree.map_structure(lambda t: t[0], timesteps)
+            self._timestep_storage = self._preallocate(sample_timestep)
+        num_steps = timesteps.observation.shape[0]
+        indices = np.arange(self._idx, self._idx + num_steps) % self._max_size
+        tree.map_structure(lambda a, x: assign(a, indices, x), self._timestep_storage, timesteps)
+        self._idx = (self._idx + num_steps) % self._max_size
+        self._n = min(self._n + num_steps, self._max_size)
 
-    def extend(self, trajectories: ActorOutput):
-        unpacked_trajectories = utils.unpack_namedtuple_np(trajectories)
-        for trajectory in unpacked_trajectories:
-            self.append(trajectory)
-        return len(unpacked_trajectories)
-
-    def _get(self, indices):
-        batch = [self._decode(self._buf[i]) for i in indices]
-        return utils.pack_namedtuple_np(batch, axis=0)
-
-    def sample(self, batch_size):
-        if batch_size > self._n:
+    def sample(self, batch_size: int):
+        if batch_size + self._traj_len > self._n:
             return None
-        batch_indices = np.random.choice(self._n, batch_size, replace=False)
-        return self._get(batch_indices)
+        start_indices = np.random.choice(self._n - self._traj_len, batch_size, replace=False)
+        all_indices = start_indices[:, None] + np.arange(self._traj_len + 1)[None]
+        base_idx = 0 if self._n < self._max_size else self._idx
+        all_indices = (all_indices + base_idx) % self._max_size
+        trajectories = tree.map_structure(lambda a: a[all_indices], self._timestep_storage)
+        return trajectories
 
     def full(self):
         return self._n == self._max_size
@@ -52,14 +43,9 @@ class UniformBuffer(object):
     def size(self):
         return self._n
 
-
-def compress_array(array: np.ndarray):
-    """Compresses a numpy array with snappy."""
-    return snappy.compress(array), array.shape, array.dtype
+    def _preallocate(self, item):
+        return tree.map_structure(lambda t: np.empty((self._max_size,) + t.shape, t.dtype), item)
 
 
-def uncompress_array(compressed) -> np.ndarray:
-    """Uncompresses a numpy array with snappy given its shape and dtype."""
-    compressed_array, shape, dtype = compressed
-    byte_string = snappy.uncompress(compressed_array)
-    return np.frombuffer(byte_string, dtype=dtype).reshape(shape)
+def assign(a, i, x):
+    a[i] = x

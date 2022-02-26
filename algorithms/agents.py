@@ -37,7 +37,6 @@ class Agent(object):
             lambda states: nets.EZPrediction(num_actions, num_bins, output_init_scale, use_v2)(states)))
         self._transit_fn = hk.without_apply_rng(hk.transform(
             lambda action, state: nets.EZTransition(use_v2)(action, state)))
-        self.step = jax.jit(self._batch_step)
 
     def init(self, rng_key: chex.PRNGKey):
         encoder_key, prediction_key, transition_key = jax.random.split(rng_key, 3)
@@ -50,8 +49,8 @@ class Agent(object):
         params = Params(encoder=encoder_params, prediction=prediction_params, transition=transition_params)
         return params
 
-    def _batch_step(self, rng_key: chex.PRNGKey, params: Params, timesteps: ActorOutput, temperature: float,
-                    is_eval: bool):
+    def batch_step(self, rng_key: chex.PRNGKey, params: Params, timesteps: ActorOutput, temperature: float,
+                   is_eval: bool):
         batch_size = timesteps.reward.shape[0]
         rng_key, step_key = jax.random.split(rng_key)
         step_keys = jax.random.split(step_key, batch_size)
