@@ -27,9 +27,11 @@ python -m experiments.breakout
 
 ## Atari 100K Benchmark Results
 Median human-normalized score:
-![Median human-normalized score.](https://github.com/Hwhitetooth/jax_muzero/blob/main/images/atari26_median_human.png)
+
+![](https://github.com/Hwhitetooth/jax_muzero/blob/main/images/atari26_median_human.png)
+
 Raw game scores:
-![Raw game scores.](https://github.com/Hwhitetooth/jax_muzero/blob/main/images/atari26_score.png)
+![](https://github.com/Hwhitetooth/jax_muzero/blob/main/images/atari26_score.png)
 
 
 ## Repository Structure
