@@ -9,7 +9,7 @@ from algorithms.muzero import Experiment
 
 if __name__ == '__main__':
     config = {
-        'env_id': 'breakout',
+        'env_id': 'Breakout',
         'env_kwargs': {},
         'seed': 42,
         'num_envs': 1,
