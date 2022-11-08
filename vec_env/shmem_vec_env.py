@@ -4,11 +4,18 @@ An interface for asynchronous vectorized environments.
 
 import logging
 import multiprocessing as mp
+from gym.wrappers.step_api_compatibility import StepAPICompatibility
 import numpy as np
 from .vec_env import VecEnv, CloudpickleWrapper
 import ctypes
 
 from .util import dict_to_obs, obs_space_info, obs_to_dict
+import gym
+
+class ResetNoInfo(gym.Wrapper):
+    def reset(self, **kwargs):
+        obs, _ = self.env.reset(**kwargs)
+        return obs
 
 _NP_TO_CT = {np.float32: ctypes.c_float,
              np.int64: ctypes.c_int64,

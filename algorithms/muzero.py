@@ -21,6 +21,7 @@ from environments import atari
 import vec_env
 
 
+
 def generate_update_fn(agent: agents.Agent, opt_update, unroll_steps: int, td_steps: int, discount_factor: float,
                        value_coef: float, policy_coef: float):
     def loss(params: Params, target_params: Params, trajectory: ActorOutput, rng_key: chex.PRNGKey):

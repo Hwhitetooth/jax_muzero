@@ -8,10 +8,20 @@ except ImportError:
     MPI = None
 
 import gym
+from gym.wrappers.step_api_compatibility import StepAPICompatibility
 import cv2
 cv2.ocl.setUseOpenCL(False)
 
 from vec_env import DummyVecEnv, Monitor, ShmemVecEnv
+
+
+class ResetNoInfo(gym.Wrapper):
+    def reset(self, **kwargs):
+        try:
+            obs, _ = self.env.reset(**kwargs)
+        except ValueError:
+            obs = self.env.reset(**kwargs)
+        return obs
 
 
 class TimeLimit(gym.Wrapper):
@@ -50,7 +60,7 @@ class NoopResetEnv(gym.Wrapper):
         if self.override_num_noops is not None:
             noops = self.override_num_noops
         else:
-            noops = self.unwrapped.np_random.randint(1, self.noop_max + 1)  # pylint: disable=E1101
+            noops = self.unwrapped.np_random.integers(1, self.noop_max + 1)  # pylint: disable=E1101
         assert noops > 0
         obs = None
         for _ in range(noops):
@@ -157,6 +167,10 @@ class ClipRewardEnv(gym.RewardWrapper):
     def reward(self, reward):
         """Bin reward to {+1, 0, -1} by its sign."""
         return np.clip(reward, -1, 1)
+    
+    def step(self, action):
+        observation, reward, terminated, info = self.env.step(action)
+        return observation, self.reward(reward), terminated, info
 
 
 class WarpFrame(gym.ObservationWrapper):
@@ -212,10 +226,19 @@ class WarpFrame(gym.ObservationWrapper):
             obs[self._key] = frame
         return obs
 
+    def step(self, action):
+        observation, reward, terminated, info = self.env.step(action)
+        return self.observation(observation), reward, terminated, info
+    
+    def reset(self, **kwargs):
+        obs = self.env.reset(**kwargs)
+        return self.observation(obs)
 
 def make_atari(env_id, max_episode_steps=None):
     env = gym.make(env_id)
     assert 'NoFrameskip' in env.spec.id
+    env = ResetNoInfo(env)
+    env = StepAPICompatibility(env, False)
     env = NoopResetEnv(env, noop_max=30)
     env = MaxAndSkipEnv(env, skip=4)
     if max_episode_steps is not None:

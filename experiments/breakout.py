@@ -2,6 +2,7 @@ import os
 
 
 from ray import tune
+from ray.air.callbacks.wandb import WandbLoggerCallback
 
 
 from algorithms.muzero import Experiment
@@ -12,7 +13,7 @@ if __name__ == '__main__':
         'env_id': 'Breakout',
         'env_kwargs': {},
         'seed': 42,
-        'num_envs': 1,
+        'num_envs': 10,
         'unroll_steps': 5,
         'td_steps': 5,
         'max_search_depth': None,
@@ -45,9 +46,10 @@ if __name__ == '__main__':
         'target_update_interval': 200,
 
         'evaluate_episodes': 32,
-        'log_interval': 4_000,
+        'log_interval': 1,
         'total_frames': 100_000,
     }
+
     log_filename = os.path.basename(__file__).split('.')[0]
     analysis = tune.run(
         Experiment,
@@ -59,4 +61,5 @@ if __name__ == '__main__':
         resources_per_trial={
             'gpu': 1,
         },
+        callbacks=[WandbLoggerCallback(project="jaxmuzero", entity="raffael", config=config)]
     )
