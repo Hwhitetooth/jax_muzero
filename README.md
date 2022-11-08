@@ -3,18 +3,13 @@ A JAX implementation of the [MuZero agent](https://www.nature.com/articles/s4158
 
 Everything is implemented in [JAX](https://github.com/google/jax), including the MCTS. The entire search process can be jitted and can run on accelerators such as GPUs.
 
-## Requirements
-Run the following command to create a new conda environment with all dependencies:
-```bash
-conda env create -f conda_env.yml
-```
-Then activate the conda environment by
-```bash
-conda activate muzero
-```
-Or if you prefer using your own Python environment, run the following command to install the dependencies:
-```bash
+## Installation
+Follow [jax installation](https://github.com/google/jax/#installation), then: 
+```shell
 pip install -r requirements.txt
+pip install autorom
+AutoROM -y
+pip install gym[atari]
 ```
 
 
